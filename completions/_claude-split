@@ -1,0 +1,97 @@
+#compdef claude-split
+_claude-split() {
+  local word configuring=0
+  for word in "${words[@]:1}"; do
+    [[ "$word" == -- ]] && break
+    [[ "$word" == --configure-subagent ]] && configuring=1
+  done
+  if (( configuring )); then
+    _arguments -s \
+      '--model[Upstream subagent model ID]:model:' \
+      '--base-url[Anthropic Messages endpoint]:URL:' \
+      '--auth[Provider authentication]:type:(x-api-key bearer none)' \
+      '--key-file[Private provider key file]:file:_files' \
+      '--key-env[Key entry in dotenv file]:name:(SUBAGENT_API_KEY DEEPSEEK_API_KEY CLI_PROXY_API_KEY)' \
+      '--api-key-stdin[Read key or environment reference from stdin]' \
+      '(--require-check)--skip-check[Skip tools; still verify authentication/model]' \
+      '(--skip-check)--require-check[Require authentication, model and tools to pass]' \
+      '--help[Configuration help]'
+  else
+    _arguments -s \
+    '--configure-subagent[Configure the subagent provider]' \
+    '--proxy-check[Show proxy status]' \
+    '--proxy-help[Show split launcher help]' \
+    '--add-dir[Additional directories to allow tool]:value:_directories' \
+    '--agent[Agent for the current session. Overrides]:value:' \
+    '--agents[JSON object defining custom agents, or]:value:_files' \
+    '--allow-dangerously-skip-permissions[Enable bypassing all permission checks]' \
+    '--allowed-tools[Allowed tools]:value:' \
+    '--allowedTools[Allowedtools]:value:' \
+    '--append-system-prompt[Append a system prompt to the default]:value:' \
+    '--autocompact[Auto-compact window size (auto, or]:value:' \
+    '--ax-screen-reader[Render screen-reader friendly output]' \
+    '--background[Start the session in the background and]' \
+    '--bare[Minimal mode: skip hooks (those defined]' \
+    '--betas[Beta headers to include in API requests]:value:' \
+    '--bg[Start the session in the background and]' \
+    '--brief[Enable SendUserMessage tool for]' \
+    '--chrome[Enable Claude in Chrome integration]' \
+    '--cloud[Create a cloud session with the given]' \
+    '--continue[Continue the most recent conversation in]' \
+    '--dangerously-skip-permissions[Bypass all permission checks.]' \
+    '--debug[Enable debug mode with optional category]' \
+    '--debug-file[Write debug logs to a specific file path]:value:_files' \
+    '--desktop[Open in the Claude Desktop app instead]' \
+    '--disable-slash-commands[Disable all skills and commands]' \
+    '--disallowed-tools[Disallowed tools]:value:' \
+    '--disallowedTools[Disallowedtools]:value:' \
+    '--effort[Effort level for the current session]:value:(low medium high xhigh max)' \
+    '--environment[Create a new cloud session that runs on]:value:' \
+    '--exclude-dynamic-system-prompt-sections[Exclude dynamic system prompt sections]' \
+    '--fallback-model[Enable automatic fallback to specified]:value:(opus sonnet haiku fable)' \
+    '--file[File resources to download at startup.]:value:' \
+    '--fork-session[When resuming, create a new session ID]' \
+    '--forward-subagent-text[Forward subagent text and thinking]' \
+    '--from-pr[Resume a session linked to a PR by PR]' \
+    '--help[Display help for command]' \
+    '--ide[Automatically connect to IDE on startup]' \
+    '--include-hook-events[Include all hook lifecycle events in the]' \
+    '--include-partial-messages[Include partial message chunks as they]' \
+    '--input-format[Input format (only works with --print):]:value:(text stream-json)' \
+    '--json-schema[JSON Schema for structured output]:value:' \
+    '--max-budget-usd[Maximum dollar amount to spend on API]:value:' \
+    '--mcp-config[Load MCP servers from JSON files or]:value:_files' \
+    '--model[Model for the current session. Provide]:value:(opus sonnet haiku fable)' \
+    '--name[Set a display name for this session]:value:' \
+    '--no-chrome[Disable Claude in Chrome integration]' \
+    '--no-session-persistence[Disable session persistence - sessions]' \
+    '--output-format[Output format (only works with --print):]:value:(text json stream-json)' \
+    '--permission-mode[Permission mode to use for the session]:value:(default acceptEdits plan dontAsk bypassPermissions)' \
+    '--permission-prompts[Who answers permission prompts with]:value:' \
+    '--plugin-dir[Load a plugin from a directory or .zip]:value:_directories' \
+    '--plugin-url[Fetch a plugin .zip from a URL for this]:value:' \
+    '--print[Print response and exit (useful for]' \
+    '--prompt-suggestions[Enable prompt suggestions. In print/SDK]' \
+    '--remote-control[Start an interactive session with Remote]' \
+    '--remote-control-session-name-prefix[Remote control session name prefix]:value:' \
+    '--replay-user-messages[Re-emit user messages from stdin back on]' \
+    '--restricted[Restricted mode: removes the built-in]' \
+    '--resume[Resume a conversation by session ID or]' \
+    '--safe-mode[Start with all customizations]' \
+    '--session-id[Use a specific session ID for the]:value:' \
+    '--setting-sources[Comma-separated list of setting sources]:value:(user project local)' \
+    '--settings[Path to a settings JSON file or a JSON]:value:_files' \
+    '--strict-mcp-config[Only use MCP servers from --mcp-config,]' \
+    '--system-prompt[System prompt to use for the session]:value:' \
+    '--system-prompt-snapshot[Record the system prompt once per]:value:(on off)' \
+    '--teleport[Resume a teleport session, optionally]' \
+    '--tmux[Create a tmux session for the worktree]' \
+    '--tools[Specify the list of available tools from]:value:' \
+    '--verbose[Override verbose mode setting from]' \
+    '--version[Output the version number]' \
+    '--worktree[Create a new git worktree for this]' \
+    '--rtk[Compress main and subagent requests through local RTK]' \
+    '*:argument:_files'
+  fi
+}
+_claude-split "$@"

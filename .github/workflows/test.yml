@@ -1,0 +1,37 @@
+name: Tests
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned RTK binaries
+        run: |
+          python - <<'PY'
+          import install, platform
+          from pathlib import Path
+          dest = Path.home()/'.local/bin'
+          dest.mkdir(parents=True, exist_ok=True)
+          install.install_rtk(dest, platform.system(), platform.machine())
+          PY
+      - name: Installer tests
+        run: python -m unittest discover -s tests -v
+      - name: Provider verification tests
+        run: python src/provider_check_test.py
+      - name: Proxy and RTK integration tests
+        run: node --test src/proxy.test.mjs src/rtk.test.mjs
+      - name: Shell syntax
+        run: |
+          bash -n install.sh install-mac.sh completions/claude-split.bash
+          if command -v zsh >/dev/null; then zsh -n completions/_claude-split; fi

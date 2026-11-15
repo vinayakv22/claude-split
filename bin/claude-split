@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""Claude main session on your login; configurable provider for subagents."""
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.request
+from pathlib import Path
+
+import shutil
+import platform
+
+ROOT = Path.home()/'.local/share/claude-subagent-proxy'
+try:
+    runtime = json.loads((ROOT/'runtime.json').read_text())
+except (OSError, ValueError):
+    runtime = {}
+
+def start_service(name):
+    if platform.system() == 'Darwin':
+        label = 'io.claude-split.' + ('rtk' if name == 'claude-split-rtk' else 'proxy')
+        command = ['launchctl', 'kickstart', f'gui/{os.getuid()}/{label}']
+    else:
+        command = ['systemctl', '--user', 'start', name + '.service']
+    result = subprocess.run(command, check=False)
+    if result.returncode:
+        sys.exit('claude-split: could not start service; rerun the installer in your logged-in terminal.')
+
+base = 'http://127.0.0.1:3457'
+args = []
+use_rtk = False
+literal = False
+for arg in sys.argv[1:]:
+    if arg == '--':
+        literal = True
+    if arg == '--rtk' and not literal:
+        use_rtk = True
+    else:
+        args.append(arg)
+if args[:1] == ['--configure-subagent']:
+    helper = Path.home()/'.local/share/claude-subagent-proxy/configure.py'
+    os.execv(sys.executable, [sys.executable, str(helper), *args[1:]])
+if args == ['--proxy-help']:
+    print('Usage: claude-split [Claude Code options]\n'
+          'Main: your normal Claude model and subscription login.\n'
+          'Subagents: the provider/model in ~/.config/claude-subagent-proxy/config.json (forced).\n'
+          'Configure: claude-split --configure-subagent\n'
+          'Configure options: claude-split --configure-subagent --help\n'
+          'Example: claude-split --model opus\n'
+          'RTK: claude-split --rtk (compress requests for both main and subagents)\n'
+          'Status: claude-split --proxy-check\n'
+          'Services: launchctl on macOS; systemctl --user on Linux. See README.')
+    sys.exit(0)
+if not any(a in ('--version', '-v', '--help', '-h') for a in args):
+    start_service('claude-subagent-proxy')
+    try:
+        for attempt in range(20):
+            try:
+                with urllib.request.urlopen(base+'/healthz', timeout=5) as response:
+                    health = json.load(response)
+                break
+            except OSError:
+                if attempt == 19:
+                    raise
+                time.sleep(0.1)
+        if not health['subagent']['ready']:
+            sys.exit('claude-split: subagent configuration/key is unavailable. Run claude-split --configure-subagent.')
+    except (OSError, ValueError) as error:
+        sys.exit(f'claude-split: proxy is unavailable: {error}')
+    if use_rtk:
+        start_service('claude-split-rtk')
+        try:
+            for attempt in range(40):
+                try:
+                    with urllib.request.urlopen('http://127.0.0.1:3458/health', timeout=2) as response:
+                        rtk_health = json.load(response)
+                    with urllib.request.urlopen('http://127.0.0.1:3458/admin/settings', timeout=2) as response:
+                        rtk_settings = json.load(response)
+                    if rtk_settings.get('anthropic_upstream', '').rstrip('/') != base:
+                        raise ValueError('RTK upstream is not the split proxy')
+                    break
+                except OSError:
+                    if attempt == 39:
+                        raise
+                    time.sleep(0.1)
+            health['rtk'] = {'ready': True, 'url': 'http://127.0.0.1:3458'}
+        except (OSError, ValueError) as error:
+            sys.exit(f'claude-split: RTK is unavailable: {error}')
+    if args == ['--proxy-check']:
+        print(json.dumps(health, indent=2))
+        sys.exit(0)
+env = os.environ.copy()
+# Select normal Claude account authentication rather than inherited CCR/API tokens.
+for key in ('ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_BASE_URL',
+            'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY'):
+    env.pop(key, None)
+settings_env = {
+    'ANTHROPIC_BASE_URL': 'http://127.0.0.1:3458' if use_rtk else base,
+    'CLAUDE_CODE_SUBAGENT_MODEL': 'split-subagent',
+    'CLAUDE_CODE_SUBAGENT_MODEL_FORCE': '1',
+}
+env.update(settings_env)
+# No login token is read, stored, or substituted by this launcher.
+claude = runtime.get('claude') or shutil.which('claude')
+if not claude or not Path(claude).is_file():
+    sys.exit('claude-split: Claude Code is missing. Install it, then rerun the installer.')
+os.execve(claude, ['claude', '--settings', json.dumps({'env':settings_env}), *args], env)
