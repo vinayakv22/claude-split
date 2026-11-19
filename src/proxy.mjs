@@ -78,6 +78,40 @@ function decodeJson(raw, encoding) {
   else if (encoding && encoding !== 'identity') throw new Error('Unsupported content encoding');
   return JSON.parse(body.toString('utf8'));
 }
+// DeepSeek's schema validator rejects the JavaScript null escape \0.
+// \x00 has the same meaning and works across ECMAScript and Rust regex engines.
+// Consume escapes in pairs so a literal backslash followed by 0 stays literal.
+export function portablePattern(pattern) {
+  let result = '';
+  for (let i = 0; i < pattern.length; i++) {
+    if (pattern[i] === '\\' && i + 1 < pattern.length) {
+      const next = pattern[++i];
+      result += next === '0' && !/[0-9]/.test(pattern[i + 1] || '') ? '\\x00' : '\\' + next;
+    } else result += pattern[i];
+  }
+  return result;
+}
+function portableSchema(schema) {
+  if (!schema || typeof schema !== 'object') return schema;
+  if (Array.isArray(schema)) return schema.map(portableSchema);
+  const result = { ...schema };
+  if (typeof result.pattern === 'string') result.pattern = portablePattern(result.pattern);
+  // Walk schema locations, not instance data such as enum/default/examples.
+  for (const key of ['properties', '$defs', 'definitions', 'dependentSchemas', 'dependencies', 'patternProperties']) {
+    if (result[key] && typeof result[key] === 'object' && !Array.isArray(result[key])) {
+      result[key] = Object.fromEntries(Object.entries(result[key]).map(([name, value]) => [
+        key === 'patternProperties' ? portablePattern(name) : name,
+        key === 'dependencies' && Array.isArray(value) ? value : portableSchema(value),
+      ]));
+    }
+  }
+  for (const key of ['items', 'additionalItems', 'additionalProperties', 'contains', 'propertyNames',
+    'if', 'then', 'else', 'not', 'unevaluatedProperties', 'unevaluatedItems', 'contentSchema',
+    'allOf', 'anyOf', 'oneOf', 'prefixItems']) {
+    if (key in result) result[key] = portableSchema(result[key]);
+  }
+  return result;
+}
 function subagentBody(body, model) {
   const copy = { ...body, model };
   // Drop client identity and Anthropic-only request configuration.
@@ -116,7 +150,9 @@ function subagentBody(body, model) {
     copy.tools = [...inlineTools.values(), ...explicitTools];
   }
   if (Array.isArray(copy.tools)) {
-    copy.tools = copy.tools.filter(tool => !String(tool.type || '').startsWith('advisor') && tool.name !== 'advisor');
+    copy.tools = copy.tools
+      .filter(tool => !String(tool.type || '').startsWith('advisor') && tool.name !== 'advisor')
+      .map(tool => tool.input_schema ? { ...tool, input_schema: portableSchema(tool.input_schema) } : tool);
     if (copy.tool_choice?.type === 'tool' && !copy.tools.some(tool => tool.name === copy.tool_choice.name)) {
       throw new Error('Selected tool is unavailable on the subagent route');
     }

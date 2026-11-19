@@ -254,3 +254,58 @@ test('main Claude inline definitions still pass through with exact body bytes', 
   assert.equal((await request(f.base, body)).status, 200);
   assert.equal(f.captured[0].body.toString(), body);
 });
+
+test('subagent tool schemas normalize null escapes without changing literal backslashes or data', async t => {
+  const f = await fixture(t);
+  const pattern = '^[^\\0]*$';
+  const literal = '^\\\\0$';
+  const schema = { type: 'object', properties: {
+    path: { type: 'string', pattern },
+    pattern: { type: 'string', default: pattern },
+    literal: { type: 'string', pattern: literal },
+  }, $defs: { nested: { anyOf: [{ type: 'string', pattern }, { type: 'null' }] } },
+  patternProperties: { [pattern]: { type: 'string', pattern } },
+  examples: [{ pattern }], const: { pattern }, enum: [{ pattern }],
+  required: ['path'], additionalProperties: false };
+  const body = { model: 'split-subagent', tools: [{ name: 'Artifact', input_schema: schema }],
+    messages: [{ role: 'assistant', content: [{ type: 'tool_use', id: 'call', name: 'Artifact', input: { pattern } }] }] };
+  assert.equal((await request(f.base, JSON.stringify(body))).status, 200);
+  const sent = JSON.parse(f.captured[0].body);
+  const expected = '^[^\\x00]*$';
+  const normalized = sent.tools[0].input_schema;
+  assert.equal(normalized.properties.path.pattern, expected);
+  assert.equal(normalized.$defs.nested.anyOf[0].pattern, expected);
+  assert.equal(normalized.patternProperties[expected].pattern, expected);
+  assert.deepEqual(normalized.properties.literal, schema.properties.literal);
+  assert.deepEqual(normalized.properties.pattern, schema.properties.pattern);
+  assert.deepEqual(normalized.examples, schema.examples);
+  assert.deepEqual(normalized.const, schema.const);
+  assert.deepEqual(normalized.enum, schema.enum);
+  assert.deepEqual(normalized.required, ['path']);
+  assert.equal(normalized.additionalProperties, false);
+  assert.deepEqual(sent.messages, body.messages);
+  for (const value of ['', 'abc', 'a\nb', 'abc\0def', '\0', '\\0', '😀']) {
+    assert.equal(new RegExp(pattern, 'u').test(value), new RegExp(expected, 'u').test(value));
+  }
+});
+
+test('inline schemas get portable regexes, while main requests stay byte-identical', async t => {
+  const f = await fixture(t);
+  const definition = { name: 'Artifact', input_schema: { type: 'string', pattern: '^[^\\0]*$' } };
+  const body = { model: 'split-subagent', messages: [{ role: 'system', content: [
+    { type: 'tool_addition', tool: { type: 'tool_definition', definition } },
+  ] }] };
+  assert.equal((await request(f.base, JSON.stringify(body))).status, 200);
+  assert.equal(JSON.parse(f.captured[0].body).tools[0].input_schema.pattern, '^[^\\x00]*$');
+  const main = JSON.stringify({ ...body, model: 'claude-sonnet-5', tools: [definition] }) + '\n';
+  assert.equal((await request(f.base, main)).status, 200);
+  assert.equal(f.captured[1].body.toString(), main);
+});
+
+test('portable null escaping distinguishes escaped backslashes and octal sequences', async () => {
+  const { portablePattern } = await import('./proxy.mjs');
+  for (const [input, expected] of [
+    ['\\0', '\\x00'], ['\\\\0', '\\\\0'], ['\\\\\\0', '\\\\\\x00'],
+    ['\\01', '\\01'], ['\\00', '\\00'], ['\\x00', '\\x00'], ['\\u0000', '\\u0000'], ['abc\\', 'abc\\'],
+  ]) assert.equal(portablePattern(input), expected);
+});

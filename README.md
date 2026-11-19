@@ -71,7 +71,10 @@ The launcher forces the alias for Claude Code subagents. Inline schemas in
 `tool_reference` entries on the subagent route. This supports providers such as
 DeepSeek that accept named tool additions but reject inline `tool_definition`.
 Explicit top-level schemas take precedence over historical inline definitions;
-main Claude requests retain their original format.
+main Claude requests retain their original format. Tool-schema regexes using
+JavaScript's null-character escape `\0` are rewritten to equivalent `\x00`
+escapes for provider compatibility. Literal escaped backslashes and schema
+instance data (examples, defaults, constants, enums) are preserved.
 
 RTK can modify main and subagent tool-result content. Default normalization
 removes eligible ANSI styling, progress redraws, trailing whitespace, and
