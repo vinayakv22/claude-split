@@ -202,3 +202,55 @@ test('configuration rejects unsafe URLs, proxy loops and invalid auth', () => {
     { base_url: 'https://example.com', model: 'm', auth_type: 'cookie' },
   ]) assert.throws(() => validateSubagentConfig(config));
 });
+
+test('inline tool definitions are hoisted and additions become references for subagents', async t => {
+  const f = await fixture(t);
+  const definition = { name: 'Read', description: 'Read a file', input_schema: { type: 'object', properties: { path: { type: 'string' } } } };
+  const payload = { model: 'split-subagent', tool_choice: { type: 'tool', name: 'Read' },
+    messages: [{ role: 'user', content: 'Read the file' }, { role: 'system', content: [
+      { type: 'tool_addition', tool: { type: 'tool_definition', definition }, cache_control: { type: 'ephemeral' } },
+      { type: 'text', text: 'Instructions stay intact' },
+    ] }] };
+  assert.equal((await request(f.base, gzipSync(JSON.stringify(payload)), { 'content-encoding': 'gzip' })).status, 200);
+  const sent = JSON.parse(f.captured[0].body);
+  assert.deepEqual(sent.tools, [definition]);
+  assert.deepEqual(sent.messages[1].content[0], { type: 'tool_addition', tool: { type: 'tool_reference', name: 'Read' }, cache_control: { type: 'ephemeral' } });
+  assert.deepEqual(sent.messages[1].content[1], payload.messages[1].content[1]);
+  assert.deepEqual(sent.tool_choice, payload.tool_choice);
+});
+
+test('inline normalization preserves tool inputs, results, removals, and explicit schema precedence', async t => {
+  const f = await fixture(t);
+  const old = { name: 'Read', input_schema: { type: 'object' } };
+  const current = { ...old, description: 'Current schema', input_schema: { type: 'object', required: ['path'] } };
+  const history = { type: 'tool_addition', tool: { type: 'tool_definition', definition: old } };
+  const opaqueInput = { type: 'tool_addition', tool: { type: 'tool_definition', definition: { name: 'NotATool' } } };
+  const removal = { type: 'tool_removal', tool: { type: 'tool_reference', name: 'Read' } };
+  const payload = { model: 'split-subagent', tools: [current], messages: [
+    { role: 'system', content: [history, history, removal] },
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'call1', name: 'Read', input: opaqueInput }] },
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call1', content: [{ type: 'text', text: 'Original output' }] }] },
+  ] };
+  assert.equal((await request(f.base, JSON.stringify(payload))).status, 200);
+  const sent = JSON.parse(f.captured[0].body);
+  assert.deepEqual(sent.tools, [current]);
+  assert.deepEqual(sent.messages[0].content[2], removal);
+  assert.deepEqual(sent.messages.slice(1), payload.messages.slice(1));
+});
+
+test('invalid inline schemas fail locally without forwarding or leaking their contents', async t => {
+  const f = await fixture(t);
+  const response = await request(f.base, JSON.stringify({ model: 'split-subagent', messages: [
+    { role: 'system', content: [{ type: 'tool_addition', tool: { type: 'tool_definition', definition: { name: 'private-marker' } } }] },
+  ] }));
+  assert.equal(response.status, 400);
+  assert.doesNotMatch(await response.text(), /private-marker/);
+  assert.equal(f.captured.length, 0);
+});
+
+test('main Claude inline definitions still pass through with exact body bytes', async t => {
+  const f = await fixture(t);
+  const body = '{ "model":"claude-sonnet-5", "messages":[{"role":"system","content":[{"type":"tool_addition","tool":{"type":"tool_definition","definition":{"name":"Read","input_schema":{"type":"object"}}}}]}] }\n';
+  assert.equal((await request(f.base, body)).status, 200);
+  assert.equal(f.captured[0].body.toString(), body);
+});

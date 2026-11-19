@@ -66,7 +66,12 @@ The main route uses your normal Claude authentication. Without RTK, request
 bodies and end-to-end identity/authentication headers pass through unchanged.
 The internal `split-subagent` alias selects the provider route; that route
 substitutes the configured model/key and removes Claude identity/authentication.
-The launcher forces the alias for Claude Code subagents.
+The launcher forces the alias for Claude Code subagents. Inline schemas in
+`tool_addition` blocks are moved into top-level `tools` and replaced by named
+`tool_reference` entries on the subagent route. This supports providers such as
+DeepSeek that accept named tool additions but reject inline `tool_definition`.
+Explicit top-level schemas take precedence over historical inline definitions;
+main Claude requests retain their original format.
 
 RTK can modify main and subagent tool-result content. Default normalization
 removes eligible ANSI styling, progress redraws, trailing whitespace, and

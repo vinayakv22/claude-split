@@ -83,6 +83,38 @@ function subagentBody(body, model) {
   // Drop client identity and Anthropic-only request configuration.
   for (const key of ['metadata', 'context_management', 'container', 'mcp_servers',
     'service_tier', 'inference_geo', 'betas']) delete copy[key];
+  // Claude Code can introduce tool schemas mid-conversation. Providers that
+  // support tool_addition by reference may not support inline definitions yet.
+  // Match Claude's own fallback: declare the schemas in tools and keep named
+  // references at their original positions. Never walk arbitrary tool inputs.
+  const inlineTools = new Map();
+  function normalizeContent(content) {
+    if (!Array.isArray(content)) return content;
+    return content.map(block => {
+      if (block?.type === 'tool_addition' && block.tool?.type === 'tool_definition') {
+        const definition = block.tool.definition;
+        if (!definition || typeof definition.name !== 'string' || !definition.name.trim() ||
+            !definition.input_schema || typeof definition.input_schema !== 'object' ||
+            Array.isArray(definition.input_schema)) throw new Error('Invalid inline tool definition');
+        inlineTools.set(definition.name, definition);
+        return { ...block, tool: { type: 'tool_reference', name: definition.name } };
+      }
+      if (block?.type === 'tool_result' && Array.isArray(block.content)) {
+        return { ...block, content: normalizeContent(block.content) };
+      }
+      return block;
+    });
+  }
+  if (Array.isArray(copy.messages)) {
+    copy.messages = copy.messages.map(message => ({ ...message, content: normalizeContent(message.content) }));
+  }
+  if (Array.isArray(copy.system)) copy.system = normalizeContent(copy.system);
+  if (inlineTools.size) {
+    // Explicit top-level schemas take precedence over historical definitions.
+    const explicitTools = Array.isArray(copy.tools) ? copy.tools : [];
+    for (const tool of explicitTools) inlineTools.delete(tool.name);
+    copy.tools = [...inlineTools.values(), ...explicitTools];
+  }
   if (Array.isArray(copy.tools)) {
     copy.tools = copy.tools.filter(tool => !String(tool.type || '').startsWith('advisor') && tool.name !== 'advisor');
     if (copy.tool_choice?.type === 'tool' && !copy.tools.some(tool => tool.name === copy.tool_choice.name)) {
@@ -141,7 +173,7 @@ export function createProxy(options = {}) {
       if (config.auth_type !== 'none' && (!key || /[\r\n]/.test(key))) { errorResponse(res, 503, 'Subagent API key is unavailable'); return; }
       upstreamUrl = providerUrl(config.base_url, req.url);
       try { upstreamBody = Buffer.from(JSON.stringify(subagentBody(body, config.model))); }
-      catch { errorResponse(res, 400, 'Selected tool is unavailable on the subagent route'); return; }
+      catch { errorResponse(res, 400, 'Subagent tool definitions are invalid or unavailable'); return; }
       // Never forward Claude credentials, cookies, identity headers or query parameters.
       headers = ['Content-Type', 'application/json', 'Accept', 'text/event-stream, application/json',
         'Anthropic-Version', '2023-06-01', 'Content-Length', String(upstreamBody.length)];

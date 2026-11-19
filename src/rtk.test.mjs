@@ -55,7 +55,8 @@ test('RTK compresses both split routes, preserves credentials, model selection a
       body: JSON.stringify({ model, max_tokens: 32, stream, metadata: { user_id: 'mock-device-account' },
         messages: [{ role: 'user', content: 'Run the command' },
           { role: 'assistant', content: [{ type: 'tool_use', id: 'tool_mock', name: 'Bash', input: { command: 'printf OK' } }] },
-          { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tool_mock', content: '\u001b[32mOK\u001b[0m\n'.repeat(100) }] }],
+          { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tool_mock', content: '\u001b[32mOK\u001b[0m\n'.repeat(100) }] },
+          { role: 'system', content: [{ type: 'tool_addition', tool: { type: 'tool_definition', definition: { name: 'InlineProbe', input_schema: { type: 'object' } } } }] }],
         tools: [{ name: 'Bash', input_schema: { type: 'object', properties: { command: { type: 'string' } } } }] }) });
     assert.equal(response.status, 200);
     const output = await response.text();
@@ -67,11 +68,14 @@ test('RTK compresses both split routes, preserves credentials, model selection a
     assert.match(req.body.messages[2].content[0].content, /OK/);
     if (model === 'split-subagent') {
       assert.equal(req.body.model, 'mock-worker');
+      assert.ok(req.body.tools.some(tool => tool.name === 'InlineProbe'));
+      assert.deepEqual(req.body.messages[3].content[0].tool, { type: 'tool_reference', name: 'InlineProbe' });
       assert.equal(req.headers['x-api-key'], 'mock-provider-key');
       assert.equal(req.headers.authorization, undefined);
       assert.equal(req.body.metadata, undefined);
     } else {
       assert.equal(req.body.model, model);
+      assert.equal(req.body.messages[3].content[0].tool.type, 'tool_definition');
       assert.equal(req.headers.authorization, 'Bearer mock-claude-login');
       assert.equal(req.headers['anthropic-beta'], 'mock-beta');
       assert.equal(req.headers['x-app'], 'cli');
