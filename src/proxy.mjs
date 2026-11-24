@@ -17,6 +17,7 @@ function errorResponse(res, status, message) {
   res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
   res.end(JSON.stringify({ type: 'error', error: { type: 'api_error', message } }));
 }
+const processSessionId = (await import('node:crypto')).randomUUID();
 function rawForwardHeaders(raw, omit = new Set()) {
   const denied = new Set([...hopHeaders, ...omit]);
   for (let i = 0; i < raw.length; i += 2) {
@@ -215,6 +216,11 @@ export function createProxy(options = {}) {
         'Anthropic-Version', '2023-06-01', 'Content-Length', String(upstreamBody.length)];
       if (config.auth_type === 'x-api-key') headers.push('X-Api-Key', key);
       else if (config.auth_type === 'bearer') headers.push('Authorization', `Bearer ${key}`);
+      // OpenCode Go routes on a stable per-conversation session ID and wants a self-identifying UA.
+      if (upstreamUrl.hostname === 'opencode.ai' || upstreamUrl.hostname.endsWith('.opencode.ai')) {
+        const sid = req.headers['x-claude-code-session-id'] || req.headers['x-opencode-session'] || processSessionId;
+        headers.push('x-opencode-session', String(sid), 'User-Agent', 'claude-split-subagent/1.0');
+      }
     } else {
       upstreamUrl = new URL(anthropic);
       upstreamUrl.pathname = anthropic.pathname.replace(/\/$/, '') + req.url.split('?')[0];

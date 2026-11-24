@@ -73,6 +73,9 @@ def stream_message(config, payload, *, timeout=20):
         headers['X-Api-Key'] = key
     elif auth == 'bearer':
         headers['Authorization'] = 'Bearer ' + key
+    if 'opencode.ai' in config['base_url']:
+        headers['x-opencode-session'] = 'claude-split-config-check'
+        headers['User-Agent'] = 'claude-split-subagent/1.0'
     request = urllib.request.Request(messages_url(config['base_url']),
         data=json.dumps({**payload, 'model': config['model'], 'stream': True}).encode(), headers=headers)
     opener = urllib.request.build_opener(NoRedirects())
@@ -221,6 +224,9 @@ def verify_catalog(config, *, timeout=20):
     key = read_key(config)
     if auth == 'x-api-key': headers['X-Api-Key'] = key
     elif auth == 'bearer': headers['Authorization'] = 'Bearer ' + key
+    if 'opencode.ai' in config['base_url']:
+        headers['x-opencode-session'] = 'claude-split-config-check'
+        headers['User-Agent'] = 'claude-split-subagent/1.0'
     endpoint = messages_url(config['base_url']).rsplit('/', 1)[0] + '/models'
     opener = urllib.request.build_opener(NoRedirects())
     deadline = time.monotonic() + timeout
@@ -274,6 +280,9 @@ def list_models(config, *, timeout=10):
     auth = config.get('auth_type', 'x-api-key')
     if auth == 'x-api-key': headers['X-Api-Key'] = key
     elif auth == 'bearer': headers['Authorization'] = 'Bearer ' + key
+    if 'opencode.ai' in config['base_url']:
+        headers['x-opencode-session'] = 'claude-split-config-check'
+        headers['User-Agent'] = 'claude-split-subagent/1.0'
     endpoint = messages_url(config['base_url']).rsplit('/', 1)[0] + '/models'
     opener = urllib.request.build_opener(NoRedirects())
     try:
