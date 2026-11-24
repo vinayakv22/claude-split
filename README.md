@@ -1,5 +1,7 @@
 # claude-split
 
+![claude-split: one Claude Code session splits into a main-session route and a subagents route](docs/readme-hero.png)
+
 **Keep your main Claude Code conversation on your Claude subscription, and run
 subagents on a different provider such as DeepSeek, Kimi, GLM, MiniMax,
 OpenRouter, or your own gateway.**
