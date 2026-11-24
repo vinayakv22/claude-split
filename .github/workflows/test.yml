@@ -33,5 +33,5 @@ jobs:
         run: node --test src/proxy.test.mjs src/rtk.test.mjs
       - name: Shell syntax
         run: |
-          bash -n install.sh install-mac.sh completions/claude-split.bash
+          bash -n install.sh completions/claude-split.bash
           if command -v zsh >/dev/null; then zsh -n completions/_claude-split; fi

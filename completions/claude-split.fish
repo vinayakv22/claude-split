@@ -74,12 +74,14 @@ complete -c claude-split -n 'not __fish_seen_argument -l configure-subagent' -l 
 complete -c claude-split -n 'not __fish_seen_argument -l configure-subagent' -l version -d 'Output the version number'
 complete -c claude-split -n 'not __fish_seen_argument -l configure-subagent' -l worktree -d 'Create a new git worktree for this'
 complete -c claude-split -n 'not __fish_seen_argument -l configure-subagent; and __fish_use_subcommand' -a 'agents attach auth auto-mode doctor gateway import install logs mcp plugin plugins purge respawn rm setup-token stop kill ultrareview update upgrade' -d 'Claude Code command'
+complete -c claude-split -n '__fish_seen_argument -l configure-subagent' -l provider -d 'Provider preset' -r -a 'anthropic deepseek local minimax moonshot openrouter zai'
 complete -c claude-split -n '__fish_seen_argument -l configure-subagent' -l model -d 'Upstream subagent model ID' -r
 complete -c claude-split -n '__fish_seen_argument -l configure-subagent' -l base-url -d 'Anthropic-compatible endpoint' -r
 complete -c claude-split -n '__fish_seen_argument -l configure-subagent' -l auth -d 'Provider authentication' -r -a 'x-api-key bearer none'
 complete -c claude-split -n '__fish_seen_argument -l configure-subagent' -l key-file -d 'Private API key file' -r -F
 complete -c claude-split -n '__fish_seen_argument -l configure-subagent' -l key-env -d 'API key entry in dotenv file' -r -a 'SUBAGENT_API_KEY DEEPSEEK_API_KEY CLI_PROXY_API_KEY'
 complete -c claude-split -n '__fish_seen_argument -l configure-subagent' -l api-key-stdin -d 'Read API key from stdin'
+complete -c claude-split -n '__fish_seen_argument -l configure-subagent' -l api-key-env -d 'Read API key from environment variable' -r
 complete -c claude-split -n '__fish_seen_argument -l configure-subagent' -l help -d 'Show configuration help'
 complete -c claude-split -n '__fish_seen_argument -l configure-subagent; and not __fish_seen_argument -l require-check' -l skip-check -d 'Skip tool test; still verify authentication/model'
 complete -c claude-split -n '__fish_seen_argument -l configure-subagent; and not __fish_seen_argument -l skip-check' -l require-check -d 'Require authentication, model and tool tests to pass'

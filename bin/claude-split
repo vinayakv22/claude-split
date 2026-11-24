@@ -48,9 +48,10 @@ if args == ['--proxy-help']:
           'Configure: claude-split --configure-subagent\n'
           'Configure options: claude-split --configure-subagent --help\n'
           'Example: claude-split --model opus\n'
-          'RTK: claude-split --rtk (compress requests for both main and subagents)\n'
+          'RTK (optional): claude-split --rtk (compress requests for both main and subagents)\n'
           'Status: claude-split --proxy-check\n'
-          'Services: launchctl on macOS; systemctl --user on Linux. See README.')
+          'Services: launchctl on macOS; systemctl --user on Linux.\n'
+          'Docs: https://github.com/vinayakv22/claude-split')
     sys.exit(0)
 if not any(a in ('--version', '-v', '--help', '-h') for a in args):
     start_service('claude-subagent-proxy')
@@ -69,6 +70,9 @@ if not any(a in ('--version', '-v', '--help', '-h') for a in args):
     except (OSError, ValueError) as error:
         sys.exit(f'claude-split: proxy is unavailable: {error}')
     if use_rtk:
+        if not (Path.home()/'.local/bin/rtk-proxy').is_file():
+            sys.exit('claude-split: RTK is optional and not installed. Add it with:\n'
+                     '  curl -fsSL https://raw.githubusercontent.com/vinayakv22/claude-split/main/install.sh | bash -s -- --rtk')
         start_service('claude-split-rtk')
         try:
             for attempt in range(40):

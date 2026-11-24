@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Install Claude split per user. No credentials are read or copied."""
+"""Install claude-split for the current user (macOS/Linux, no sudo).
+
+Interactive by default; pass --yes (or run without a terminal) for unattended installs.
+Unattended provider setup reads CLAUDE_SPLIT_PROVIDER / CLAUDE_SPLIT_BASE_URL /
+CLAUDE_SPLIT_AUTH / CLAUDE_SPLIT_MODEL / CLAUDE_SPLIT_API_KEY from the environment.
+"""
 import argparse
 import hashlib
 import io
@@ -21,6 +26,8 @@ SOURCE = Path(__file__).resolve().parent
 RTK_VERSION = 'v1.2.0'
 MARKER = '# >>> claude-split >>>'
 END = '# <<< claude-split <<<'
+REPO_URL = 'https://github.com/vinayakv22/claude-split'
+ONE_LINER = 'curl -fsSL https://raw.githubusercontent.com/vinayakv22/claude-split/main/install.sh | bash'
 
 
 def target_for(system, machine):
@@ -70,6 +77,15 @@ def update_block(path, body):
         path.write_text(new)
 
 
+def remove_block(path):
+    if not path.exists() or MARKER not in path.read_text():
+        return
+    text = path.read_text()
+    shutil.copy2(path, path.with_name(path.name + f'.claude-split-backup-{time.time_ns()}'))
+    pattern = re.compile(r'\n*' + re.escape(MARKER) + r'.*?' + re.escape(END) + r'\n?', re.S)
+    path.write_text(pattern.sub('\n', text).rstrip('\n') + '\n')
+
+
 def launch_agent(label, argv, home, state):
     return {
         'Label': label, 'ProgramArguments': argv, 'WorkingDirectory': str(home),
@@ -105,6 +121,8 @@ def systemd_unit(argv, home, state, rtk=False):
 def install_services(home, node, system, activate=True):
     state = home/'.local/state/claude-split-rtk'
     commands = service_commands(home, node)
+    if not (home/'.local/bin/rtk-proxy').is_file():
+        del commands['rtk']  # RTK is optional; only register it when installed.
     if system == 'Darwin':
         agents = home/'Library/LaunchAgents'
         agents.mkdir(parents=True, exist_ok=True)
@@ -126,11 +144,12 @@ def install_services(home, node, system, activate=True):
         if activate:
             subprocess.run(['systemctl', '--user', 'daemon-reload'], check=True)
             # New units start on demand. Restart existing active instances on upgrade.
-            for unit in ('claude-subagent-proxy', 'claude-split-rtk'):
+            for name in commands:
+                unit = 'claude-split-rtk' if name == 'rtk' else 'claude-subagent-proxy'
                 subprocess.run(['systemctl', '--user', 'try-restart', unit + '.service'], check=True)
 
 
-def install(home, system, machine, *, rtk=True, activate=True):
+def install(home, system, machine, *, rtk=False, activate=True):
     node = shutil.which('node')
     claude = shutil.which('claude')
     if not node or not claude:
@@ -175,20 +194,140 @@ compdef _claude-split claude-split''')
     fish.parent.mkdir(parents=True, exist_ok=True)
     fish.write_text('if not contains -- "$HOME/.local/bin" $PATH\n    set -gx PATH "$HOME/.local/bin" $PATH\nend\n')
     install_services(home, node, system, activate)
-    print('Installed claude-split, completions, and on-demand services.')
-    print('Open a new terminal, then run:')
-    print('  claude auth login  # if not already logged in')
-    print('  claude-split --configure-subagent')
-    print('  claude-split --rtk')
-    print('Existing provider configuration and Claude account data were preserved.')
+    print('Installed claude-split, shell completions, and on-demand services.')
+    print('RTK: ' + ('installed (use claude-split --rtk)' if (bin_dir/'rtk-proxy').is_file() else 'not installed (optional)'))
+
+
+SERVICE_FILES = {
+    'Darwin': ['Library/LaunchAgents/io.claude-split.proxy.plist', 'Library/LaunchAgents/io.claude-split.rtk.plist'],
+    'Linux': ['.config/systemd/user/claude-subagent-proxy.service', '.config/systemd/user/claude-split-rtk.service'],
+}
+
+
+def uninstall(home, system, activate=True):
+    """Remove what install() added. Provider config, RTK binaries and usage data are kept."""
+    if activate and system == 'Darwin':
+        for label in ('io.claude-split.proxy', 'io.claude-split.rtk'):
+            subprocess.run(['launchctl', 'bootout', f'gui/{os.getuid()}/{label}'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    elif activate:
+        subprocess.run(['systemctl', '--user', 'disable', '--now', 'claude-split-rtk.service', 'claude-subagent-proxy.service'],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for relative in SERVICE_FILES.get(system, []) + [
+            '.local/bin/claude-split', '.config/fish/conf.d/claude-split.fish',
+            '.config/fish/completions/claude-split.fish', '.local/share/bash-completion/completions/claude-split',
+            '.local/share/zsh/site-functions/_claude-split']:
+        (home/relative).unlink(missing_ok=True)
+    shutil.rmtree(home/'.local/share/claude-subagent-proxy', ignore_errors=True)
+    if activate and system == 'Linux':
+        subprocess.run(['systemctl', '--user', 'daemon-reload'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for filename in ('.bashrc', '.bash_profile', '.zshrc'):
+        remove_block(home/filename)
+    print('Removed claude-split, its services, completions, and shell blocks.')
+    print('Kept (delete manually if unwanted):')
+    print(f'  provider config + key: {home}/.config/claude-subagent-proxy/')
+    print(f'  RTK binaries:          {home}/.local/bin/rtk, {home}/.local/bin/rtk-proxy')
+    print(f'  RTK usage data:        {home}/.local/state/claude-split-rtk/')
+
+
+def prompt_yes(question, default):
+    suffix = ' [Y/n] ' if default else ' [y/N] '
+    while True:
+        answer = input(question + suffix).strip().lower()
+        if not answer:
+            return default
+        if answer in ('y', 'yes'):
+            return True
+        if answer in ('n', 'no'):
+            return False
+
+
+def provider_env(environ):
+    names = ('PROVIDER', 'BASE_URL', 'AUTH', 'MODEL', 'API_KEY')
+    return {name: environ['CLAUDE_SPLIT_' + name].strip() for name in names if environ.get('CLAUDE_SPLIT_' + name, '').strip()}
+
+
+def configure_command(home, values):
+    """Build the configure.py argv from CLAUDE_SPLIT_* values. The key goes to stdin, never argv."""
+    argv = [sys.executable, str(home/'.local/share/claude-subagent-proxy/configure.py')]
+    for name, flag in (('PROVIDER', '--provider'), ('BASE_URL', '--base-url'), ('AUTH', '--auth'), ('MODEL', '--model')):
+        if name in values:
+            argv += [flag, values[name]]
+    if 'API_KEY' in values:
+        argv += ['--api-key-env', 'CLAUDE_SPLIT_API_KEY']
+    return argv
+
+
+def run_configuration(home, values, interactive, environ):
+    argv = configure_command(home, values)
+    if not interactive:
+        missing = [n for n in ('MODEL',) if n not in values]
+        if 'PROVIDER' not in values and 'BASE_URL' not in values:
+            missing.append('PROVIDER (or CLAUDE_SPLIT_BASE_URL)')
+        if 'API_KEY' not in values and values.get('AUTH') != 'none':
+            missing.append('API_KEY')
+        if missing:
+            print('Provider not configured: set ' + ', '.join('CLAUDE_SPLIT_' + m for m in missing) +
+                  ' or run claude-split --configure-subagent later.', file=sys.stderr)
+            return False
+    result = subprocess.run(argv, env=dict(environ), stdin=None if interactive else subprocess.DEVNULL)
+    return result.returncode == 0
+
+
+def main(argv=None, environ=os.environ):
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    rtk = parser.add_mutually_exclusive_group()
+    rtk.add_argument('--rtk', dest='rtk', action='store_true', default=None, help='Install the optional pinned RTK request compressor')
+    rtk.add_argument('--no-rtk', '--skip-rtk', dest='rtk', action='store_false', help='Do not install RTK (existing RTK binaries are left alone)')
+    configure = parser.add_mutually_exclusive_group()
+    configure.add_argument('--configure', dest='configure', action='store_true', default=None, help='Configure the subagent provider after installing')
+    configure.add_argument('--no-configure', dest='configure', action='store_false', help='Skip provider configuration')
+    parser.add_argument('-y', '--yes', action='store_true', help='Never prompt; use flags, CLAUDE_SPLIT_* variables, and defaults')
+    parser.add_argument('--uninstall', action='store_true', help='Remove claude-split (keeps provider config and RTK binaries)')
+    parser.add_argument('--no-services', action='store_true', help='Write services without registering them (testing/staging)')
+    args = parser.parse_args(argv)
+    home, system = Path.home(), platform.system()
+    if args.uninstall:
+        uninstall(home, system, activate=not args.no_services)
+        return 0
+    interactive = sys.stdin.isatty() and not args.yes
+    values = provider_env(environ)
+    print('claude-split installer: your Claude login for the main session, another provider for subagents.')
+    if args.rtk is None:
+        args.rtk = False
+        if interactive:
+            print('\nOptional: RTK (https://github.com/rtk-ai/rtk) is a local proxy that trims noisy tool output')
+            print('(ANSI codes, progress bars, duplicate lines) before requests leave your machine.')
+            print('It downloads two pinned, SHA256-verified binaries (~40 MB). You can add it later with --rtk.')
+            args.rtk = prompt_yes('Install RTK?', False)
+    install(home, system, platform.machine(), rtk=args.rtk, activate=not args.no_services)
+    configured = (home/'.config/claude-subagent-proxy/config.json').exists()
+    if args.configure is None:
+        if values:
+            args.configure = True
+        elif interactive:
+            args.configure = prompt_yes('Configure the subagent provider now (needs its API key)?', not configured)
+        else:
+            args.configure = False
+    ok = True
+    if args.configure:
+        print('\nConfiguring the subagent provider (key is verified live, never printed).')
+        ok = run_configuration(home, values, interactive, environ)
+        if not ok:
+            print('Provider configuration was not saved. Retry with: claude-split --configure-subagent', file=sys.stderr)
+        configured = configured or ok
+    print('\nNext steps (open a new terminal first so PATH and completions load):')
+    print('  claude auth login               # if Claude Code is not logged in yet')
+    if not configured:
+        print('  claude-split --configure-subagent')
+    print('  claude-split' + (' --rtk' if (home/'.local/bin/rtk-proxy').is_file() else '') + '                 # use it like `claude`')
+    print('Docs: ' + REPO_URL)
+    return 0 if ok or interactive else 1
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--skip-rtk', action='store_true', help='Keep existing RTK binaries')
-    parser.add_argument('--no-services', action='store_true', help='Write services without registering them (testing/staging)')
-    args = parser.parse_args()
     try:
-        install(Path.home(), platform.system(), platform.machine(), rtk=not args.skip_rtk, activate=not args.no_services)
+        sys.exit(main())
     except (OSError, ValueError, StopIteration, subprocess.CalledProcessError) as error:
         sys.exit(f'Installation failed: {error}')
+    except (KeyboardInterrupt, EOFError):
+        sys.exit('\nInstallation cancelled.')

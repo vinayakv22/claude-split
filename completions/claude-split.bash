@@ -13,13 +13,14 @@ _claude_split_complete() {
     if (( configure )); then
         case "$prev" in
             --auth) choices="x-api-key bearer none" ;;
+            --provider) choices="anthropic deepseek local minimax moonshot openrouter zai" ;;
             --key-env) choices="SUBAGENT_API_KEY DEEPSEEK_API_KEY CLI_PROXY_API_KEY" ;;
             --key-file)
                 while IFS= read -r entry; do COMPREPLY+=("$entry"); done < <(compgen -f -- "$cur")
                 compopt -o filenames 2>/dev/null || true
                 return ;;
-            --model|--base-url) return ;;
-            *) choices="--model --base-url --auth --key-file --key-env --api-key-stdin --skip-check --require-check --help" ;;
+            --model|--base-url|--api-key-env) return ;;
+            *) choices="--provider --model --base-url --auth --key-file --key-env --api-key-stdin --api-key-env --skip-check --require-check --help" ;;
         esac
     else
         case "$prev" in

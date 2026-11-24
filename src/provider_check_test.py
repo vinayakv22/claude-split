@@ -191,6 +191,24 @@ class ProviderCheckTests(unittest.TestCase):
                 self.assertEqual(json.loads(path.read_text())['subagent']['api_key'], KEY)
                 self.assertNotIn(KEY, output.getvalue())
 
+    def test_provider_preset_and_api_key_env_flag(self):
+        with tempfile.TemporaryDirectory() as home:
+            path = Path(home)/'config.json'
+            with patch.object(configuration, 'CONFIG', path), patch.object(configuration, 'check_provider', return_value={'authentication':'passed','model':'passed','tools':'skipped'}), patch.dict(os.environ, {'SPLIT_TEST_KEY': KEY}), contextlib.redirect_stdout(io.StringIO()) as output:
+                configuration.configure(['--provider', 'moonshot', '--model', 'worker', '--api-key-env', 'SPLIT_TEST_KEY', '--skip-check'])
+            saved = json.loads(path.read_text())['subagent']
+            self.assertEqual((saved['base_url'], saved['auth_type'], saved['api_key']), (configuration.PROVIDERS['moonshot'][1], 'bearer', KEY))
+            self.assertNotIn(KEY, output.getvalue())
+
+    def test_interactive_menu_lists_catalog_models(self):
+        with tempfile.TemporaryDirectory() as home, provider() as (url, _):
+            path = Path(home)/'config.json'
+            # Custom provider -> URL -> auth; key via getpass; pick model #3 from the live catalog.
+            answers = iter([str(len(configuration.PROVIDERS) + 1), url, 'bearer', '3'])
+            with patch.object(configuration, 'CONFIG', path), patch('builtins.input', lambda *_: next(answers)), patch.object(configuration.getpass, 'getpass', return_value=KEY), patch.object(configuration, 'check_provider', return_value={'authentication':'passed','model':'passed','tools':'skipped'}), contextlib.redirect_stdout(io.StringIO()):
+                configuration.configure(['--skip-check'])
+            self.assertEqual(json.loads(path.read_text())['subagent']['model'], 'worker')
+
     def test_missing_or_unsafe_environment_reference_does_not_save(self):
         for reference in ('$SPLIT_TEST_MISSING_KEY', '$(printf unsafe)', '${KEY:-fallback}'):
             with self.subTest(reference=reference), tempfile.TemporaryDirectory() as home:

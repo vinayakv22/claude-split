@@ -7,12 +7,14 @@ _claude-split() {
   done
   if (( configuring )); then
     _arguments -s \
+      '--provider[Provider preset]:provider:(anthropic deepseek local minimax moonshot openrouter zai)' \
       '--model[Upstream subagent model ID]:model:' \
       '--base-url[Anthropic Messages endpoint]:URL:' \
       '--auth[Provider authentication]:type:(x-api-key bearer none)' \
       '--key-file[Private provider key file]:file:_files' \
       '--key-env[Key entry in dotenv file]:name:(SUBAGENT_API_KEY DEEPSEEK_API_KEY CLI_PROXY_API_KEY)' \
       '--api-key-stdin[Read key or environment reference from stdin]' \
+      '--api-key-env[Read key from exported environment variable]:name:' \
       '(--require-check)--skip-check[Skip tools; still verify authentication/model]' \
       '(--skip-check)--require-check[Require authentication, model and tools to pass]' \
       '--help[Configuration help]'

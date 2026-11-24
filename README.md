@@ -1,178 +1,228 @@
-# Claude split
+# claude-split
 
-A personal Claude Code launcher: use your normal Claude login and main model,
-route subagents to a configurable Anthropic Messages provider, and optionally
-put both routes through local RTK request compression.
+**Keep your main Claude Code conversation on your Claude subscription, and run
+subagents on a different provider such as DeepSeek, Kimi, GLM, MiniMax,
+OpenRouter, or your own gateway.**
 
-## Install on a Mac
-
-Download **install-mac.sh** from this private repository and run it in Terminal:
-
-```bash
-bash ~/Downloads/install-mac.sh
-```
-
-The standalone script installs GitHub CLI if needed, asks you to sign into the
-GitHub account with repository access, downloads this private repo, and runs
-its installer. Homebrew may request your macOS password. Run without `sudo`.
-
-Or, if GitHub CLI is already installed and authenticated:
-
-```bash
-gh repo clone vinayakv22/claude-split
-cd claude-split
-./install.sh
-```
-
-Supports Apple Silicon and Intel Macs. The installer installs missing Node.js
-and Python through Homebrew, installs Claude Code using its official native
-installer if absent, and installs pinned RTK + rtk-proxy v1.2.0 binaries with
-SHA256 verification against GitHub release metadata. It needs internet access.
-Existing RTK binaries in `~/.local/bin` are replaced with this pinned version;
-use `./install.sh --skip-rtk` to keep your existing compatible binaries.
-
-It installs zsh, Fish, and Bash completions and adds `~/.local/bin` to their PATH.
-Shell configuration edits use marked blocks, are idempotent, and create backups
-before changing existing files. Existing provider configuration and Claude
-account data stay on the machine and are preserved. No keys are included here.
-
-Open a **new terminal**, then:
-
-```bash
-claude auth login                         # if not already logged in
-claude-split --configure-subagent
-claude-split --proxy-check
-claude-split --rtk --model sonnet
-```
-
-Use any main Claude model available to your account. Supply your actual
-subagent model ID, endpoint, and API key during configuration. No paid provider
-request is made by the installer itself; configuring a provider may incur usage.
-
-## Routing and RTK
+`claude-split` is a drop-in launcher for `claude`. It starts a small local
+proxy that leaves your main session untouched (same login, same model) and
+reroutes only subagent requests to an Anthropic Messages-compatible provider
+that you choose. Subagents do most of the bulk reading and searching, so this
+can save a lot of subscription quota.
 
 ```text
-claude-split       -> split proxy -> Anthropic (main) / provider (subagents)
-claude-split --rtk -> RTK -> split proxy -> Anthropic / provider
+claude-split        ─► local split proxy ─┬─► Anthropic (main session, your normal login)
+                                          └─► your provider (subagents only)
+claude-split --rtk  ─► RTK compressor ─► split proxy ─► …   (optional)
 ```
 
-Both services bind only to loopback: split proxy `127.0.0.1:3457`, RTK
-`127.0.0.1:3458`. No Docker or hosted server is needed. Services start on demand
-and do not start automatically at login. If RTK cannot start, `--rtk` fails
-rather than silently bypassing it. Omitting the flag bypasses RTK even if its
-service is still running.
+- Runs on macOS (Apple Silicon or Intel) and Linux (systemd user services). Never needs sudo.
+- Everything binds to `127.0.0.1`. You don't need Docker or a hosted server, and nothing starts at login.
+- Your Claude login token is never read, stored, or forwarded to the subagent provider.
+- [RTK](https://github.com/rtk-ai/rtk) request compression is **optional**, and the installer asks whether you want it.
 
-The main route uses your normal Claude authentication. Without RTK, request
-bodies and end-to-end identity/authentication headers pass through unchanged.
-The internal `split-subagent` alias selects the provider route; that route
-substitutes the configured model/key and removes Claude identity/authentication.
-The launcher forces the alias for Claude Code subagents. Inline schemas in
-`tool_addition` blocks are moved into top-level `tools` and replaced by named
-`tool_reference` entries on the subagent route. This supports providers such as
-DeepSeek that accept named tool additions but reject inline `tool_definition`.
-Explicit top-level schemas take precedence over historical inline definitions;
-main Claude requests retain their original format. Tool-schema regexes using
-JavaScript's null-character escape `\0` are rewritten to equivalent `\x00`
-escapes for provider compatibility. Literal escaped backslashes and schema
-instance data (examples, defaults, constants, enums) are preserved.
+## Install
 
-RTK can modify main and subagent tool-result content. Default normalization
-removes eligible ANSI styling, progress redraws, trailing whitespace, and
-adjacent duplicate lines in larger tool results. Not every request shrinks,
-and no fixed savings are promised. This installs the HTTP proxy integration,
-not global RTK Claude hooks. Cache-breakpoint injection, credential borrowing,
-and RTK context-retrieval compression are disabled. No extra model calls are
-configured for compression. RTK is a separately licensed upstream dependency;
-see [RTK](https://github.com/rtk-ai/rtk).
-
-RTK's own context-retrieval feature happens to be called CCR; it is unrelated
-to Claude Code Router. Neither is required here.
-
-## Provider configuration
+### 1. Interactive one-liner (recommended)
 
 ```bash
-claude-split --configure-subagent
+curl -fsSL https://raw.githubusercontent.com/vinayakv22/claude-split/main/install.sh | bash
+```
+
+The installer:
+
+1. Checks for Python 3.9+, Node.js 20+, and Claude Code. On macOS it offers to install missing ones with Homebrew, and it offers the official Claude Code installer.
+2. Asks whether to install the optional RTK compressor (default: **no**).
+3. Asks whether to configure the subagent provider now. You pick a provider preset, paste its API key into a hidden prompt, and choose a model from the provider's live model list. The key is verified before anything is saved.
+
+### 2. Unattended, with an API key
+
+For CI, dotfiles, or scripted setups. Pass the provider settings as environment
+variables on the `bash` side of the pipe. The key is handed to the configurator
+by variable name, so it never shows up in process arguments or output.
+
+```bash
+read -rs CLAUDE_SPLIT_API_KEY && export CLAUDE_SPLIT_API_KEY   # paste key, press Enter (bash/zsh)
+curl -fsSL https://raw.githubusercontent.com/vinayakv22/claude-split/main/install.sh \
+  | CLAUDE_SPLIT_PROVIDER=deepseek CLAUDE_SPLIT_MODEL=<model-id> bash -s -- --yes
+```
+
+| Variable | Meaning |
+| --- | --- |
+| `CLAUDE_SPLIT_PROVIDER` | Preset name (see [providers](#providers)), **or** set `CLAUDE_SPLIT_BASE_URL` |
+| `CLAUDE_SPLIT_BASE_URL` | Any Anthropic Messages endpoint (overrides the preset URL) |
+| `CLAUDE_SPLIT_AUTH` | `x-api-key`, `bearer`, or `none` (overrides the preset) |
+| `CLAUDE_SPLIT_MODEL` | Provider model ID used for subagents (required) |
+| `CLAUDE_SPLIT_API_KEY` | Provider API key (not needed with `AUTH=none`) |
+
+Add `--rtk` to also install RTK.
+
+### 3. Let your coding agent install it
+
+Paste this to Claude Code, Codex, Cursor, or any agent with shell access:
+
+> Install claude-split by following https://github.com/vinayakv22/claude-split/blob/main/INSTALL.md
+
+[INSTALL.md](INSTALL.md) is written for agents. It tells them to ask you for
+the provider, model, and RTK choice, and keeps your key out of their transcript.
+
+### 4. From a clone
+
+```bash
+git clone https://github.com/vinayakv22/claude-split
+cd claude-split
+./install.sh            # same interactive installer
+```
+
+### Installer options
+
+```text
+--rtk / --no-rtk              install the optional RTK compressor, or don't (default: ask; unattended: no)
+--configure / --no-configure  configure the provider after installing (default: ask; unattended: only if CLAUDE_SPLIT_* set)
+-y, --yes                     never prompt (also automatic when there is no terminal)
+--uninstall                   remove claude-split (keeps your provider config and RTK binaries)
+```
+
+To pass options through the one-liner, use `curl … | bash -s -- --rtk --yes`.
+Set `CLAUDE_SPLIT_REF=v1.0.0` to install a tag or branch other than `main`.
+Rerunning the installer upgrades in place and keeps your configuration. Shell
+rc edits are idempotent marked blocks, and a backup is taken first.
+
+## Usage
+
+Open a **new terminal** after installing, then:
+
+```bash
+claude auth login                 # once, if Claude Code isn't logged in yet
+claude-split                      # use exactly like `claude`; all flags pass through
+claude-split --model opus         # any main model your account can use
+claude-split --rtk                # route through RTK (if installed)
+claude-split --configure-subagent # change provider / model / key at any time
+claude-split --proxy-check        # local readiness status (JSON)
+claude-split --proxy-help
+```
+
+Completions are installed for bash, zsh, and fish.
+
+## Providers
+
+Presets are starting points. Every configuration is verified live before it
+is saved, and you can override the URL and auth type of any preset.
+
+| Preset | Base URL | Auth |
+| --- | --- | --- |
+| `deepseek` | `https://api.deepseek.com/anthropic` | `x-api-key` |
+| `anthropic` | `https://api.anthropic.com` (a separate API key) | `x-api-key` |
+| `moonshot` | `https://api.moonshot.ai/anthropic` | `bearer` |
+| `zai` | `https://api.z.ai/api/anthropic` | `bearer` |
+| `minimax` | `https://api.minimax.io/anthropic` | `bearer` |
+| `openrouter` | `https://openrouter.ai/api` | `bearer` |
+| `local` | `http://127.0.0.1:8317/v1` (CLIProxyAPI or similar) | `bearer` |
+| custom | any Anthropic Messages endpoint | any |
+
+The provider must speak the **Anthropic Messages API** with tools and SSE
+streaming. OpenAI-only endpoints need a separate adapter. API roots, `/v1`
+bases, and full `/v1/messages` URLs are all accepted.
+
+```bash
+claude-split --configure-subagent                                     # interactive menu
+claude-split --configure-subagent --provider zai --model <model-id>  # prompts only for the key
 claude-split --configure-subagent --help
 ```
 
-Supports Anthropic Messages endpoints, including CLIProxyAPI and other
-compatible gateways, with `x-api-key`, `bearer`, or `none` authentication.
-Accepts API roots, `/v1` bases, or full `/v1/messages` URLs. OpenAI-only endpoints
-need a separate adapter. Gateways must support compatible Messages tools and SSE.
+**Ways to supply the key.** By default you get a hidden prompt, which also
+accepts `$VAR`, `${VAR}`, or `env:VAR`. The alternatives are
+`--api-key-env VAR`, `--api-key-stdin`, or `--key-file /abs/path` (add
+`--key-env NAME` for a dotenv file). Keys are never accepted as command-line
+values, and are stored in a `0700` directory.
 
-The hidden API-key prompt accepts a literal key, `$MY_API_KEY`, `${MY_API_KEY}`,
-or `env:MY_API_KEY`. Export the variable first. Its value is safely resolved and
-stored as the key, not as a live variable reference. Missing/empty variables
-and shell expressions are rejected. `--api-key-stdin` accepts the same syntax.
-Keep keys out of command-line arguments. For existing key files:
+**Verification.** Before saving, claude-split checks reachability,
+authentication, and the model, using the provider's model catalog where one
+exists and a tiny Messages request otherwise. It then runs a streamed tool
+round trip. If authentication or the model check fails, nothing is saved and
+the previous configuration is kept. If only the tool check fails (for example
+an unfunded account), the configuration is saved as `unverified`. Use
+`--skip-check` to skip the tool test, or `--require-check` to make every check
+mandatory. Messages-based checks can incur a few tokens of usage. Checks never
+follow redirects and never print keys or raw provider errors.
 
-```bash
-claude-split --configure-subagent \
-  --model YOUR_MODEL --base-url http://127.0.0.1:8317/v1 \
-  --auth bearer --key-file /absolute/path/to/key.txt
-```
+## How routing works
 
-For a dotenv file, add `--key-env VARIABLE_NAME`. Paths are local to each
-machine; configure again on a new Mac instead of copying Linux key-file paths.
+The launcher sets `ANTHROPIC_BASE_URL` to the local proxy and forces
+Claude Code's subagent model to the internal alias `split-subagent`:
 
-Endpoint reachability, authentication, and model verification must pass before
-saving. An authenticated model-catalog request checks that the model is listed.
-If the catalog is unsupported, successful Messages output is required instead.
-By default the check also requests a tool call, sends a tool result, and checks
-streamed text. Messages tests can incur normal usage charges.
+- **Main requests** pass through to Anthropic unchanged, with your normal Claude authentication. Inherited `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, Bedrock, and Vertex variables are cleared for the session.
+- **`split-subagent` requests** get your configured model and key, and all Claude identity and authentication headers are stripped before they leave your machine.
+- Some providers (DeepSeek, for example) reject the inline `tool_definition` schemas that Claude Code sends to subagents. On the subagent route only, these are moved into top-level `tools`, and `\0` regex escapes are rewritten as `\x00`. Main requests keep their original format.
 
-Only tool/usage failures **after** mandatory checks pass allow saving as
-`unverified`. Invalid keys, unknown models, unreachable endpoints, and malformed
-protocol responses preserve the previous config. An unfunded provider can save
-if catalog verification passes; without a working catalog or successful model
-response, verification cannot be completed and saving is blocked.
+## RTK (optional)
 
-```bash
-claude-split --configure-subagent --skip-check     # skip tools, still verify auth/model
-claude-split --configure-subagent --require-check  # all checks must pass
-```
+[RTK](https://github.com/rtk-ai/rtk) is a separately licensed local proxy. It
+trims noisy tool output (ANSI styling, progress redraws, trailing whitespace,
+and adjacent duplicate lines in larger tool results) from both main and
+subagent requests. Savings vary and are not guaranteed. claude-split installs
+pinned `rtk` and `rtk-proxy` v1.2.0 binaries and verifies their SHA256 against
+GitHub release metadata. It wires up only the HTTP proxy integration, with
+cache-breakpoint injection, credential borrowing, and context-retrieval (CCR)
+compression all disabled. No extra model calls are made.
 
-These flags are mutually exclusive. Skipping tools can still require a tiny
-billable Messages request if the provider lacks a catalog. Verification status
-and individual check results are saved alongside the private configuration.
-Checks have bounded deadlines, do not follow redirects, and do not print keys
-or raw provider errors. `--proxy-check` only checks local readiness.
+- Add it later: rerun the installer with `--rtk`.
+- If RTK can't start, `claude-split --rtk` fails rather than silently bypassing it. Without `--rtk`, RTK is never used.
+- `--no-rtk` never deletes RTK binaries you already have. If they're present, the RTK service stays registered.
 
 ## Files and services
 
-- Launcher: `~/.local/bin/claude-split`
-- Runtime: `~/.local/share/claude-subagent-proxy/`
-- Private provider config: `~/.config/claude-subagent-proxy/config.json`
-- RTK usage data/logs: `~/.local/state/claude-split-rtk/`
-- Mac LaunchAgents: `~/Library/LaunchAgents/io.claude-split.{proxy,rtk}.plist`
-- Completions: standard per-user zsh, Fish, and Bash directories.
+| What | Where |
+| --- | --- |
+| Launcher | `~/.local/bin/claude-split` |
+| Runtime | `~/.local/share/claude-subagent-proxy/` |
+| Provider config + key (private) | `~/.config/claude-subagent-proxy/config.json` |
+| RTK binaries / usage data | `~/.local/bin/rtk{,-proxy}`, `~/.local/state/claude-split-rtk/` |
+| macOS services | `~/Library/LaunchAgents/io.claude-split.{proxy,rtk}.plist` |
+| Linux services | `~/.config/systemd/user/{claude-subagent-proxy,claude-split-rtk}.service` |
 
-macOS status and stop commands:
+The split proxy listens on `127.0.0.1:3457` and RTK on `127.0.0.1:3458`.
+Services start on demand when you run `claude-split`, and are restarted on
+upgrade, so finish active sessions before you rerun the installer.
 
 ```bash
+# Linux
+systemctl --user status claude-subagent-proxy claude-split-rtk
+systemctl --user stop claude-subagent-proxy claude-split-rtk
+# macOS
 launchctl print gui/$(id -u)/io.claude-split.proxy
-launchctl print gui/$(id -u)/io.claude-split.rtk
-launchctl kill SIGTERM gui/$(id -u)/io.claude-split.rtk
-rtk-proxy stats --bind 127.0.0.1:3458
+launchctl kill SIGTERM gui/$(id -u)/io.claude-split.proxy
 ```
 
-Rerun the installer to update files and register services. It can stop existing
-proxy sessions during an upgrade; finish active sessions first. Runtime paths
-are resolved during installation for Homebrew and native Claude installations.
-Linux is also supported with existing Node.js 20+, Python 3.9+, and systemd user
-services (`claude-subagent-proxy` and `claude-split-rtk`).
+## Uninstall
 
-## Verification
+```bash
+curl -fsSL https://raw.githubusercontent.com/vinayakv22/claude-split/main/install.sh | bash -s -- --uninstall
+```
+
+This removes the launcher, runtime, services, completions, and shell blocks.
+Your provider config (including the key), RTK binaries, and RTK usage data are
+kept, and their paths are printed so you can delete them yourself.
+
+## Development
 
 ```bash
 python3 -m unittest discover -s tests -v
-python3 src/provider_check_test.py
-node --test src/proxy.test.mjs src/rtk.test.mjs
+(cd src && python3 provider_check_test.py)
+node --test src/proxy.test.mjs src/rtk.test.mjs   # rtk.test.mjs needs RTK in ~/.local/bin
 ```
 
-Tests use local mock providers, including real RTK routing/compression and SSE;
-they consume no paid API usage. Installer tests cover Apple Silicon/Intel target
-selection, LaunchAgent generation, shell/config preservation, repeated installs,
-archive checksum rejection, and platform-specific launcher commands. GitHub
-Actions runs the suite on macOS and Linux. A real Claude subscription login and
-a funded provider must be tested separately on your own Mac.
+The tests use local mock providers, including real RTK routing and SSE, and
+make no paid API calls. GitHub Actions runs them on macOS and Linux.
+
+## Disclaimer
+
+This is an independent project, not affiliated with or endorsed by Anthropic
+or any provider listed here. You're responsible for complying with the terms of
+your Claude plan and of each provider you route traffic to. Subagent prompts,
+including file contents your agents read, are sent to the provider you
+configure.
+
+## License
+
+[MIT](LICENSE). RTK is a separate project under its own license.

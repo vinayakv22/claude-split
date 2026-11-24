@@ -264,6 +264,30 @@ def verify_catalog(config, *, timeout=20):
     raise ProviderCheckError('Model verification exceeded the model-list pagination limit.')
 
 
+def list_models(config, *, timeout=10):
+    """Best-effort first page of model IDs for interactive selection; None if unavailable."""
+    headers = {'Accept': 'application/json', 'Anthropic-Version': '2023-06-01'}
+    try:
+        key = read_key(config)
+    except ProviderCheckError:
+        return None
+    auth = config.get('auth_type', 'x-api-key')
+    if auth == 'x-api-key': headers['X-Api-Key'] = key
+    elif auth == 'bearer': headers['Authorization'] = 'Bearer ' + key
+    endpoint = messages_url(config['base_url']).rsplit('/', 1)[0] + '/models'
+    opener = urllib.request.build_opener(NoRedirects())
+    try:
+        with opener.open(urllib.request.Request(endpoint, headers=headers), timeout=timeout) as response:
+            payload = response.read(1024 * 1024 + 1)
+        data = json.loads(payload) if len(payload) <= 1024 * 1024 else None
+    except Exception:
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get('data'), list):
+        return None
+    ids = [entry.get('id') for entry in data['data'] if isinstance(entry, dict)]
+    return [i for i in ids if isinstance(i, str) and i] or None
+
+
 def verify_simple_message(config, *, timeout):
     content, _ = stream_message(config, {'max_tokens': 16, 'thinking': {'type': 'disabled'},
         'messages': [{'role': 'user', 'content': 'Reply OK.'}]}, timeout=timeout)
